@@ -1,0 +1,1380 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>圖片標註快手 (EZ-PicNote) - v1.0.0</title>
+    
+    <!-- 桌面軟體圖示與設定檔連結 -->
+    <link rel="manifest" href="manifest.json">
+    <link rel="icon" type="image/png" sizes="192x192" href="icon-192.png">
+    <link rel="apple-touch-icon" href="icon-192.png">
+    <meta name="theme-color" content="#f0f2f5">
+
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+TC:wght@400;700&family=Noto+Serif+TC:wght@500;700&display=swap" rel="stylesheet">
+    <style>
+        body {
+            font-family: 'Noto Serif TC', serif;
+            background-color: #f0f2f5;
+            user-select: none;
+            height: 100vh;
+            overflow: hidden;
+            display: flex;
+            flex-direction: column;
+        }
+        header { flex-shrink: 0; z-index: 50; }
+        #main-layout {
+            display: flex;
+            flex-grow: 1;
+            overflow: hidden;
+        }
+        #viewport {
+            flex-grow: 1;
+            overflow: auto;
+            background: #adb5bd;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            padding: 5px;
+        }
+        #canvas-container {
+            position: relative;
+            box-shadow: 0 15px 60px rgba(0,0,0,0.3);
+            background: white;
+            transform-origin: center center;
+            transition: transform 0.1s ease-out;
+        }
+        canvas { display: block; touch-action: none; }
+        
+        .text-editor-active {
+            position: absolute;
+            background: rgba(255, 255, 255, 0.8);
+            border: 2px dashed #3b82f6;
+            outline: none;
+            padding: 2px; margin: 0; z-index: 100;
+            white-space: pre; overflow: hidden;
+            line-height: 1.2;
+            color: inherit;
+            resize: none;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.1);
+        }
+        
+        .icon-btn {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 4px;
+            border-radius: 0.375rem;
+            min-width: 34px;
+            height: 34px;
+            padding: 0 6px;
+            cursor: pointer;
+            transition: all 0.2s;
+            color: #4b5563;
+            flex-shrink: 0;
+            white-space: nowrap;
+        }
+        .icon-btn:hover { background-color: #f3f4f6; }
+        
+        .tool-active {
+            background-color: #2563eb !important;
+            color: #ffffff !important;
+            box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06) !important;
+            border-color: transparent !important;
+        }
+        .tool-inactive {}
+
+        .attr-label {
+            font-size: 12px;
+            font-weight: 700;
+            color: #6b7280;
+            white-space: nowrap;
+        }
+        .prop-divider {
+            width: 1px;
+            height: 20px;
+            background-color: #d1d5db;
+            margin: 0 8px;
+            flex-shrink: 0;
+        }
+        .layer-item {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 10px 12px;
+            border-bottom: 1px solid #f9fafb;
+            cursor: pointer;
+            transition: background-color 0.2s;
+            background-color: white;
+        }
+        .layer-item:hover { background-color: #eff6ff; }
+        .layer-item.active {
+            background-color: #dbeafe;
+            border-left: 4px solid #2563eb;
+            box-shadow: inset 0 2px 4px 0 rgba(0, 0, 0, 0.06);
+        }
+        .layer-item.drag-over {
+            border-top: 2px solid #3b82f6;
+            background-color: #f0f9ff;
+        }
+        
+        #layer-panel {
+            width: 270px; background: white; border-left: 1px solid #dee2e6;
+            display: flex; flex-direction: column; flex-shrink: 0;
+        }
+        
+        #settingsModal {
+            display: none; position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%);
+            z-index: 1000; background: white; padding: 25px; border-radius: 20px;
+            box-shadow: 0 30px 80px rgba(0,0,0,0.5); width: 90%; max-width: 450px;
+        }
+        #modalOverlay {
+            display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%;
+            background: rgba(0,0,0,0.4); z-index: 999; backdrop-filter: blur(3px);
+        }
+        
+        input[type=range] { 
+            -webkit-appearance: none; height: 6px; background: #e5e7eb; border-radius: 4px; cursor: pointer;
+        }
+        input[type=range]::-webkit-slider-thumb {
+            -webkit-appearance: none; width: 14px; height: 14px; background: #2563eb; border-radius: 50%;
+        }
+        input[type=color] { cursor: pointer; border: none; background: transparent; border-radius: 4px; }
+        
+        .no-scrollbar::-webkit-scrollbar { display: none; }
+        .no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
+        
+        .scroll-arrow {
+            @apply flex items-center justify-center w-8 h-full bg-gray-50 text-gray-400 hover:text-blue-600 hover:bg-gray-100 cursor-pointer transition-colors z-10 shrink-0;
+        }
+    </style>
+</head>
+<body>
+
+    <header class="bg-white border-b flex flex-col shadow-sm overflow-hidden">
+        
+        <!-- 第一列工具列 -->
+        <div class="flex items-stretch border-b border-gray-100 bg-gray-50 h-[50px]">
+            <button class="scroll-arrow border-r border-gray-200" onclick="document.getElementById('toolbar1').scrollBy(-200, 0)">
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><path d="M15 18l-6-6 6-6"/></svg>
+            </button>
+
+            <div id="toolbar1" class="flex items-center overflow-x-auto no-scrollbar gap-4 px-4 flex-grow scroll-smooth">
+                <div class="flex items-center gap-2 shrink-0">
+                    <button id="saveProject" class="icon-btn" title="存檔專案" style="color: #4f46e5; border: 1px solid #e5e7eb; background: white;">
+                        <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><polyline points="17 21 17 13 7 13 7 21"/></svg>
+                    </button>
+                    <button onclick="document.getElementById('loadProjectInput').click()" class="icon-btn" title="讀取相片或專案" style="border: 1px solid #e5e7eb; background: white;">
+                        <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>
+                    </button>
+
+                    <div class="prop-divider"></div>
+                    <button onclick="document.getElementById('loadLogoInput').click()" class="icon-btn" title="疊加 LOGO 或浮水印" style="color: #059669; border: 1px solid #e5e7eb; background: white;">
+                        <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><rect width="18" height="18" x="3" y="3" rx="2" ry="2"/><circle cx="9" cy="9" r="2"/><path d="m21 15-3.086-3.086a2 2 0 0 0-2.828 0L6 21"/><line x1="12" y1="12" x2="12" y2="12" stroke-width="4" stroke-linecap="round"/></svg>
+                        <span style="font-size: 11px; font-weight: bold;">+標誌</span>
+                    </button>
+                    
+                    <!-- PWA 安裝按鈕 (預設隱藏，符合條件才會出現) -->
+                    <div id="installDivider" class="prop-divider" style="display: none;"></div>
+                    <button id="installAppBtn" class="icon-btn" title="安裝到電腦/手機桌面" style="display: none; color: #d97706; border: 1px solid #fde68a; background: #fffbeb; padding: 0 10px;">
+                        <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+                        <span style="font-size: 11px; font-weight: bold; margin-left: 4px;">安裝APP</span>
+                    </button>
+                </div>
+
+                <div class="flex items-center bg-white rounded-lg border border-gray-200 shadow-sm px-2 py-1 gap-1 shrink-0">
+                    <button id="modeSelect" class="icon-btn mode-btn tool-active" title="選取" style="color: #4b5563; background-color: transparent;"><svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="m3 3 7.07 16.97 2.51-7.39 7.39-2.51L3 3z"/><path d="m13 13 6 6"/></svg></button>
+                    <div class="prop-divider !h-6 !mx-1"></div>
+                    
+                    <button id="modeCrop" class="icon-btn mode-btn tool-inactive" title="裁切 (圈出保留範圍，瞬間裁去多餘部分)" style="color: #4b5563; background-color: transparent;"><svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M6 2v14a2 2 0 0 0 2 2h14"/><path d="M18 22V8a2 2 0 0 0-2-2H2"/></svg></button>
+                    <div class="prop-divider !h-6 !mx-1"></div>
+
+                    <button id="modePencil" class="icon-btn mode-btn tool-inactive" title="自由畫筆 (手寫或手繪線條)" style="color: #4b5563; background-color: transparent;"><svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M17 3a2.828 2.828 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5L17 3z"/></svg></button>
+                    <button id="modeHide" class="icon-btn mode-btn tool-inactive" title="遮蔽筆 (塗抹蓋掉原圖的敏感資訊)" style="color: #4b5563; background-color: transparent;">
+                        <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="m7 21-4.3-4.3c-1-1-1-2.5 0-3.4l9.9-9.9c1-1 2.5-1 3.4 0l4.4 4.4c1 1 1 2.5 0 3.4L10.5 21z"/><path d="m18 16.5-10.5-10.5"/></svg>
+                    </button>
+                    <button id="modeText" class="icon-btn mode-btn tool-inactive" title="打字" style="color: #4b5563; background-color: transparent;"><svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="4 7 4 4 20 4 20 7"/><line x1="9" y1="20" x2="15" y2="20"/><line x1="12" y1="4" x2="12" y2="20"/></svg></button>
+                    <button id="modeStep" class="icon-btn mode-btn tool-inactive" title="步驟印章 (點一下蓋單個，雙擊按鈕鎖定連續蓋)" style="padding: 0 10px; border: 1.5px solid #fca5a5; color: #ef4444; background-color: #fef2f2; transition: box-shadow 0.2s;">
+                        <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><circle cx="12" cy="12" r="10"/><path d="M10.5 9.5L12 8v8"/></svg>
+                        <span style="font-size:12px; font-weight:bold; margin-left:4px;">步驟印章</span>
+                    </button>
+                    
+                    <button id="modeArrow" class="icon-btn mode-btn tool-inactive" title="箭頭" style="color: #4b5563; background-color: transparent;"><svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="5" y1="12" x2="19" y2="12"/><polyline points="12 5 19 12 12 19"/></svg></button>
+                    <button id="modeRect" class="icon-btn mode-btn tool-inactive" title="方框" style="color: #4b5563; background-color: transparent;"><svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><rect width="18" height="18" x="3" y="3" rx="2"/></svg></button>
+                    <button id="modeCircle" class="icon-btn mode-btn tool-inactive" title="圓圈" style="color: #4b5563; background-color: transparent;"><svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><circle cx="12" cy="12" r="10"/></svg></button>
+                    <button id="modeEraser" class="icon-btn mode-btn tool-inactive" title="還原橡皮擦 (精準擦除您畫的標記)" style="color: #4b5563; background-color: transparent;">
+                        <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="m12 18-5.3-5.3c-1-1-1-2.5 0-3.4l5.9-5.9c1-1 2.5-1 3.4 0l4.4 4.4c1 1 1 2.5 0 3.4L15.5 18z"/><path d="m20 22-9.5-9.5"/><path d="M3 4l2 2m-2 0l2-2" stroke-width="3" stroke-linecap="round"/></svg>
+                    </button>
+                    <button id="modeEyedropper" class="icon-btn mode-btn tool-inactive" title="智慧滴管 (吸取原圖底色，完美相融)" style="color: #4b5563; background-color: transparent;"><svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="m2 22 1-1h3l9-9"/><path d="M3 21v-3l9-9"/><path d="m15 6 3 3"/><path d="M14 4.5l5.5 5.5"/><path d="M19.5 10a2.12 2.12 0 0 0 0-3L17 4.5a2.12 2.12 0 0 0-3 0"/></svg></button>
+                </div>
+
+                <div class="flex items-center gap-2 shrink-0">
+                    <button id="undoBtn" title="復原" class="icon-btn" style="color:#d97706; background:#fffbeb; border:1px solid #fde68a;">
+                        <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M9 14 4 9l5-5"/><path d="M4 9h10.5a5.5 5.5 0 0 1 5.5 5.5v0a5.5 5.5 0 0 1-5.5 5.5H11"/></svg>
+                    </button>
+                    <button id="deleteBtn" title="刪除單一選取" class="icon-btn" style="color:#ef4444; background:#fef2f2; border:1px solid #fee2e2;">
+                        <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M3 6h18"></path><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"></path><path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"></path><line x1="10" y1="11" x2="10" y2="17"></line><line x1="14" y1="11" x2="14" y2="17"></line></svg>
+                    </button>
+                    
+                    <div class="prop-divider"></div>
+
+                    <button id="clearMarksBtn" title="清空所有標記 (保留底圖)" class="icon-btn" style="background:#f97316; color:white; padding:0 12px;">
+                        <span style="font-size:12px; font-weight:bold; letter-spacing:1px;">清空標記</span>
+                    </button>
+                    <button id="clearAllBtn" title="徹底清空畫布與底圖" class="icon-btn" style="background:#dc2626; color:white; padding:0 12px;">
+                        <span style="font-size:12px; font-weight:bold; letter-spacing:1px;">清空畫布</span>
+                    </button>
+                    
+                    <div class="prop-divider"></div>
+                    
+                    <div class="flex items-center bg-white rounded-md border border-gray-200 h-[36px] px-3 shadow-sm gap-2">
+                        <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" class="text-gray-400"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+                        <input type="range" id="zoomSlider" min="10" max="300" value="100" class="w-24 mx-1">
+                        <span id="zoomLabel" class="text-[12px] font-black w-10 text-right text-blue-600">100%</span>
+                    </div>
+                    
+                    <button id="downloadBtn" class="icon-btn" style="background:#2563eb; color:white; padding:0 16px; margin-left:4px;">
+                        <span style="font-size:14px; font-weight:bold; letter-spacing:2px;">下載</span>
+                    </button>
+                    
+                    <button id="openSettings" class="icon-btn tool-inactive ml-1" title="系統資訊與操作說明" style="color: #4b5563; background-color: transparent;">
+                        <svg xmlns="http://www.w3.org/2000/svg" width="22" height="22" viewBox="0 0 24 24" fill="currentColor"><path d="M19.14,12.94c0.04-0.3,0.06-0.61,0.06-0.94c0-0.32-0.02-0.64-0.06-0.94l2.03-1.58c0.18-0.14,0.23-0.41,0.12-0.61 l-1.92-3.32c-0.12-0.22-0.37-0.29-0.59-0.22l-2.39,0.96c-0.5-0.38-1.03-0.7-1.62-0.94L14.4,2.81c-0.04-0.24-0.24-0.41-0.48-0.41 h-3.84c-0.24,0-0.43,0.17-0.47,0.41L9.25,5.35C8.66,5.59,8.12,5.92,7.63,6.29L5.24,5.33c-0.22-0.08-0.47,0-0.59,0.22L2.73,8.87 C2.62,9.08,2.66,9.34,2.86,9.48l2.03,1.58C4.84,11.36,4.8,11.69,4.8,12s0.02,0.64,0.06,0.94l-2.03,1.58 c-0.18,0.14-0.23,0.41-0.12,0.61l1.92,3.32c0.12,0.22,0.37,0.29,0.59,0.22l2.39-0.96c0.5,0.38,1.03,0.7,1.62,0.94l0.36,2.54 c0.05,0.24,0.24,0.41,0.48,0.41h3.84c0.24,0,0.43-0.17,0.47-0.41l0.36-2.54c0.59-0.24,1.13-0.56,1.62-0.94l2.39,0.96 c0.22,0.08,0.47,0,0.59-0.22l1.92-3.32c0.12-0.22,0.07-0.49-0.12-0.61L19.14,12.94z M12,15.6c-1.98,0-3.6-1.62-3.6-3.6 s1.62-3.6,3.6-3.6s3.6,1.62,3.6,3.6S13.98,15.6,12,15.6z"/></svg>
+                    </button>
+                </div>
+            </div>
+
+            <button class="scroll-arrow border-l border-gray-200" onclick="document.getElementById('toolbar1').scrollBy(200, 0)">
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><path d="M9 18l6-6-6-6"/></svg>
+            </button>
+        </div>
+
+        <div class="flex items-stretch border-b border-gray-100 bg-white h-[50px]">
+            <button class="scroll-arrow border-r border-gray-100 bg-white" onclick="document.getElementById('toolbar2').scrollBy(-200, 0)">
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><path d="M15 18l-6-6 6-6"/></svg>
+            </button>
+
+            <div id="toolbar2" class="flex items-center px-4 overflow-x-auto shadow-inner bg-white no-scrollbar flex-grow scroll-smooth gap-4">
+                <div class="flex items-center gap-2 shrink-0">
+                    <label class="attr-label">筆畫/文字</label>
+                    <div class="w-7 h-7 rounded overflow-hidden border border-gray-300 shadow-sm shrink-0">
+                        <input type="color" id="fgColor" value="#ff0000" class="w-10 h-10 -m-1">
+                    </div>
+                    <input type="range" id="sizePicker" min="2" max="200" value="24" class="w-24 mx-1">
+                    <span id="sizeVal" class="text-[12px] font-bold text-gray-500 w-6 text-right">24</span>
+                    
+                    <button id="outlineToggle" class="icon-btn tool-inactive" style="height:28px; min-width:28px; border:1px solid #e5e7eb; background:#f9fafb; color: #4b5563;" title="顯示/隱藏外框線">
+                        <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><rect width="18" height="18" x="3" y="3" rx="2"/></svg>
+                    </button>
+                    <button id="dashToggle" class="icon-btn tool-inactive" style="height:28px; min-width:28px; border:1px solid #e5e7eb; background:#f9fafb; color: #4b5563;" title="切換虛線模式">
+                        <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="4" y1="12" x2="8" y2="12"/><line x1="12" y1="12" x2="16" y2="12"/><line x1="20" y1="12" x2="22" y2="12"/></svg>
+                    </button>
+                </div>
+
+                <div class="prop-divider"></div>
+
+                <div class="flex items-center gap-2 shrink-0">
+                    <label class="attr-label">底色</label>
+                    <div class="w-7 h-7 rounded overflow-hidden border border-gray-300 shadow-sm shrink-0">
+                        <input type="color" id="bgColor" value="#ffffff" class="w-10 h-10 -m-1">
+                    </div>
+                    <label class="attr-label ml-1">透明度</label>
+                    <input type="range" id="bgOpacity" min="0" max="100" value="0" class="w-24">
+                </div>
+
+                <div class="prop-divider"></div>
+
+                <div class="flex items-center gap-2 shrink-0">
+                    <label class="attr-label">字體</label>
+                    <select id="fontFamily" class="text-[12px] bg-white border border-gray-300 rounded-md px-2 py-1 outline-none font-bold text-gray-700 shadow-sm cursor-pointer">
+                        <option value="'Noto Serif TC', serif">思源宋體</option>
+                        <option value="'Noto Sans TC', sans-serif">思源黑體</option>
+                        <option value="'BiauKai', 'DFKai-SB', cursive">標楷體</option>
+                    </select>
+                </div>
+
+                <div class="prop-divider"></div>
+
+                <div class="flex items-center gap-2 shrink-0">
+                    <label class="attr-label" title="設定下一個蓋出的步驟印章內容">下個印章</label>
+                    <input type="text" id="stepStartNum" value="1" class="w-10 bg-white border border-gray-300 rounded-md px-1 py-1 text-center text-[12px] font-black text-blue-600 shadow-sm outline-none">
+                </div>
+
+                <div class="prop-divider"></div>
+
+                <div class="flex items-center gap-2 shrink-0">
+                    <button id="rotateEl" class="icon-btn tool-inactive" style="height:28px; padding:0 8px; border:1px solid #e5e7eb; background:white; color: #4b5563;" title="旋轉選取的物件">
+                        <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M21 12a9 9 0 1 1-9-9c2.52 0 4.93 1 6.74 2.74L21 8"/><path d="M21 3v5h-5"/></svg>
+                        <span style="font-size:11px; font-weight:bold;">轉物件</span>
+                    </button>
+                    <button id="rotateBg" class="icon-btn tool-inactive" style="height:28px; padding:0 8px; border:1px solid #e5e7eb; background:white; color: #4b5563;" title="旋轉整張底圖">
+                        <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/></svg>
+                        <span style="font-size:11px; font-weight:bold;">轉底圖</span>
+                    </button>
+                </div>
+            </div>
+
+            <button class="scroll-arrow border-l border-gray-100 bg-white" onclick="document.getElementById('toolbar2').scrollBy(200, 0)">
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><path d="M9 18l6-6-6-6"/></svg>
+            </button>
+        </div>
+        
+        <input type="file" id="loadProjectInput" accept=".json, image/*" class="hidden">
+        <input type="file" id="loadLogoInput" accept="image/*" class="hidden">
+    </header>
+
+    <div id="main-layout">
+        <div id="viewport">
+            <div id="canvas-container">
+                <canvas id="mainCanvas"></canvas>
+            </div>
+        </div>
+        
+        <aside id="layer-panel">
+            <div class="p-3 bg-gray-50 border-b border-gray-200 font-black text-xs flex justify-between items-center text-blue-900 shadow-sm relative z-10">
+                <span>圖層管理清單</span>
+                <span id="layer-count" class="bg-blue-600 text-white text-[10px] px-2 py-0.5 rounded-full">0</span>
+            </div>
+            <div id="layer-list" class="flex-grow overflow-y-auto bg-gray-50 no-scrollbar"></div>
+        </aside>
+    </div>
+
+    <div id="modalOverlay"></div>
+    
+    <div id="magnifier" class="hidden fixed pointer-events-none rounded-full border-4 border-white shadow-2xl overflow-hidden z-[9999]" style="width: 120px; height: 120px; box-shadow: 0 0 0 1px rgba(0,0,0,0.1), 0 10px 25px rgba(0,0,0,0.4);">
+        <canvas id="magCanvas" width="120" height="120" class="block w-full h-full" style="image-rendering: pixelated;"></canvas>
+        <div class="absolute top-1/2 left-1/2 w-3 h-3 border-[2px] border-red-500 rounded-sm -translate-x-1/2 -translate-y-1/2 pointer-events-none shadow-sm box-border"></div>
+        <div id="magColorText" class="absolute bottom-1.5 left-0 w-full text-center text-[11px] font-black text-white drop-shadow-md tracking-wider">#FFFFFF</div>
+    </div>
+
+    <div id="settingsModal" class="max-h-[85vh] overflow-y-auto">
+        <h3 class="text-xl font-bold mb-2 border-b pb-2 text-blue-900">圖片標註快手 (EZ-PicNote)</h3>
+        <div class="text-xs text-gray-500 mb-4 space-y-1">
+            <p>版本號：v1.0.0 (Release)</p>
+            <p>企劃與互動界面設計：吳佩芳</p>
+        </div>
+
+        <h4 class="font-bold text-blue-800 mb-2 mt-4">✨ 本APP的特色</h4>
+        <ul class="text-sm text-gray-700 space-y-2 mb-4">
+            <li>• <span class="font-bold">純前端零隱私外洩</span>：無需上傳伺服器，安全處理私密截圖。</li>
+            <li>• <span class="font-bold">神級智慧工具</span>：自動遞增步驟印章、無縫吸色滴管、去背還原擦。</li>
+            <li>• <span class="font-bold">直覺圖層管理</span>：支援滑鼠拖曳排序，精準掌握圖層覆蓋關係。</li>
+            <li>• <span class="font-bold">白板模式支援</span>：無需底圖，直接使用畫筆或印章，瞬間變身教學白板。</li>
+        </ul>
+
+        <h4 class="font-bold text-blue-800 mb-2">📖 操作說明</h4>
+        <ul class="text-sm text-gray-700 space-y-2">
+            <li>• <span class="font-bold text-blue-600">Win+Shift+S (最強截圖技)</span>：使用電腦內建功能畫框框，然後在APP內直接 <span class="font-bold text-red-500">Ctrl + V</span> 貼上成為底圖。</li>
+            <li>• <span class="font-bold text-blue-600">空白畫布</span>：不用貼圖，直接選擇上方畫筆或印章，就能在畫布上自由作畫！</li>
+            <li>• <span class="font-bold text-blue-600">完美複製物件 (Ctrl+拖曳)</span>：選取任何印章或物件，<span class="font-bold text-red-500">按住 Ctrl 鍵再用滑鼠拖曳</span>即可完美拉出一個分身！步驟印章還會自動+1號碼！</li>
+            <li>• <span class="font-bold text-blue-600">遮蔽筆與滴管</span>：使用智慧滴管吸取原圖底色，系統會自動切換為遮蔽筆，讓您無縫隱藏敏感資訊。</li>
+            <li>• <span class="font-bold text-blue-600">裁切底圖</span>：點選裁切刀拉出範圍，瞬間切除多餘畫面。</li>
+            <li>• <span class="font-bold text-blue-600">Ctrl + 滾輪</span>：直覺放大 / 縮小畫布。</li>
+            <li>• <span class="font-bold text-blue-600">步驟印章</span>：點擊按鈕<span class="text-red-500 font-black">一下</span>蓋完單個會自動切換回指標；對按鈕<span class="text-red-500 font-black">雙擊</span>可鎖定連續蓋章模式。</li>
+            <li>• <span class="font-bold text-blue-600">快速編輯文字</span>：雙擊文字/印章可修改內容。編輯時按下 <span class="font-bold text-red-500">Ctrl + Enter</span> 即可快速完成輸入。</li>
+            <li>• <span class="font-bold text-blue-600">還原橡皮擦</span>：專門擦除您畫錯的標記與畫筆，就像真的白板擦一樣。</li>
+            <li>• <span class="font-bold text-red-600">智慧防呆退號</span>：蓋錯印章只要刪除它，號碼會自動退回，不用手動改數字！</li>
+        </ul>
+        <button id="closeSettings" class="mt-6 w-full py-3 bg-blue-600 text-white rounded-xl font-bold shadow-lg hover:bg-blue-700 transition-colors">開始使用</button>
+    </div>
+
+    <script>
+        window.addEventListener('DOMContentLoaded', () => {
+            const canvas = document.getElementById('mainCanvas');
+            const ctx = canvas.getContext('2d', { willReadFrequently: true });
+            const container = document.getElementById('canvas-container');
+            const viewport = document.getElementById('viewport');
+            const fgColorPicker = document.getElementById('fgColor');
+            const bgColorPicker = document.getElementById('bgColor');
+            const bgOpacityPicker = document.getElementById('bgOpacity');
+            const sizePicker = document.getElementById('sizePicker');
+            const sizeVal = document.getElementById('sizeVal');
+            const fontSelector = document.getElementById('fontFamily');
+            
+            const markupCanvas = document.createElement('canvas');
+            markupCanvas.width = 1000; markupCanvas.height = 600;
+            const markupCtx = markupCanvas.getContext('2d', { willReadFrequently: true });
+            
+            const zoomSlider = document.getElementById('zoomSlider');
+            const zoomLabel = document.getElementById('zoomLabel');
+            
+            const layerList = document.getElementById('layer-list');
+            const layerCount = document.getElementById('layer-count');
+            
+            const magDiv = document.getElementById('magnifier');
+            const magCanvas = document.getElementById('magCanvas');
+            const magCtx = magCanvas.getContext('2d', { willReadFrequently: true });
+
+            let bgImage = null, bgRotation = 0, elements = [], history = []; 
+            let mode = 'select', selectedIndex = -1, selectedPoint = null; 
+            let isDragging = false, isDrawing = false, currentElement = null;
+            let dragStartX, dragStartY, dragOffsetX, dragOffsetY, zoom = 1, isInputting = false, isOutlined = true, isDashed = false, isShiftPressed = false;
+            let pingTimer = 0; 
+            let cropRect = null;
+            
+            let stepModeType = 'single'; 
+            
+            let copiedElement = null;
+            let justPastedElement = false;
+
+            canvas.width = 1000; canvas.height = 600;
+            const safeOn = (id, event, handler) => { const el = document.getElementById(id); if (el) el[event] = handler; };
+            
+            render();
+
+            safeOn('openSettings', 'onclick', () => { document.getElementById('settingsModal').style.display = 'block'; document.getElementById('modalOverlay').style.display = 'block'; });
+            safeOn('closeSettings', 'onclick', () => { document.getElementById('settingsModal').style.display = 'none'; document.getElementById('modalOverlay').style.display = 'none'; });
+
+            const setModeActive = (clickedBtn) => {
+                document.querySelectorAll('.mode-btn').forEach(btn => {
+                    btn.classList.remove('tool-active');
+                    btn.classList.add('tool-inactive');
+                    if (btn.id === 'modeStep') btn.style.boxShadow = '';
+                });
+                clickedBtn.classList.remove('tool-inactive');
+                clickedBtn.classList.add('tool-active');
+                
+                if (clickedBtn.id === 'modeStep' && stepModeType === 'continuous') {
+                    clickedBtn.style.boxShadow = '0 0 0 2px #ef4444'; 
+                }
+                
+                if (mode !== 'eyedropper') magDiv.classList.add('hidden');
+                
+                if (mode === 'eyedropper' || mode === 'crop') canvas.style.cursor = 'crosshair';
+                else canvas.style.cursor = 'default';
+            };
+
+            const modes = { 'modeSelect': 'select', 'modeCrop': 'crop', 'modePencil': 'pencil', 'modeHide': 'hide', 'modeEraser': 'eraser', 'modeText': 'text', 'modeArrow': 'arrow', 'modeRect': 'rect', 'modeCircle': 'circle', 'modeEyedropper': 'eyedropper' };
+            Object.keys(modes).forEach(id => {
+                safeOn(id, 'onclick', (e) => {
+                    mode = modes[id];
+                    setModeActive(e.currentTarget);
+                    selectedIndex = -1; render(); updateLayerUI();
+                });
+            });
+
+            safeOn('modeStep', 'onclick', (e) => {
+                mode = 'step';
+                stepModeType = 'single';
+                setModeActive(e.currentTarget);
+                selectedIndex = -1; render(); updateLayerUI();
+            });
+            safeOn('modeStep', 'ondblclick', (e) => {
+                mode = 'step';
+                stepModeType = 'continuous';
+                setModeActive(e.currentTarget);
+                selectedIndex = -1; render(); updateLayerUI();
+            });
+
+            const toggleButtonStyle = (btnId, isActive) => {
+                const btn = document.getElementById(btnId);
+                if (isActive) {
+                    btn.classList.remove('tool-inactive');
+                    btn.classList.add('tool-active');
+                } else {
+                    btn.classList.remove('tool-active');
+                    btn.classList.add('tool-inactive');
+                }
+            };
+
+            toggleButtonStyle('outlineToggle', isOutlined);
+            safeOn('outlineToggle', 'onclick', (e) => {
+                isOutlined = !isOutlined; 
+                toggleButtonStyle('outlineToggle', isOutlined);
+                if (selectedIndex !== -1) { elements[selectedIndex].isOutlined = isOutlined; render(); }
+            });
+
+            toggleButtonStyle('dashToggle', isDashed);
+            safeOn('dashToggle', 'onclick', (e) => {
+                isDashed = !isDashed; 
+                toggleButtonStyle('dashToggle', isDashed);
+                if (selectedIndex !== -1) { elements[selectedIndex].isDashed = isDashed; render(); }
+            });
+
+            safeOn('rotateBg', 'onclick', () => { bgRotation = (bgRotation + 90) % 360; render(); });
+            
+            safeOn('rotateEl', 'onclick', () => {
+                if (selectedIndex !== -1) {
+                    elements[selectedIndex].rotate = (elements[selectedIndex].rotate || 0) + (Math.PI / 2);
+                    render();
+                }
+            });
+
+            function deleteSelectedElement() {
+                if (selectedIndex !== -1) {
+                    const deletedEl = elements[selectedIndex];
+                    elements.splice(selectedIndex, 1);
+                    selectedIndex = -1;
+                    
+                    if (deletedEl.type === 'step') {
+                        let stepInput = document.getElementById('stepStartNum');
+                        let currentNext = parseInt(stepInput.value);
+                        let deletedNum = parseInt(deletedEl.text);
+                        if (!isNaN(currentNext) && !isNaN(deletedNum) && deletedNum === currentNext - 1) {
+                            stepInput.value = deletedNum;
+                        }
+                    }
+                    
+                    saveHistory(); render(); updateLayerUI();
+                }
+            }
+
+            safeOn('deleteBtn', 'onclick', deleteSelectedElement);
+            
+            safeOn('clearMarksBtn', 'onclick', () => {
+                if (elements.length > 0 && confirm("確定要「清空所有標記」嗎？（您的底圖將會保留）")) {
+                    elements = []; selectedIndex = -1; saveHistory(); render(); updateLayerUI();
+                }
+            });
+
+            safeOn('clearAllBtn', 'onclick', () => {
+                if (confirm("確定要「徹底清空」畫布與底圖嗎？")) {
+                    elements = []; bgImage = null; selectedIndex = -1; bgRotation = 0; saveHistory(); render(); updateLayerUI();
+                }
+            });
+
+            function syncSelected() {
+                if (selectedIndex !== -1) {
+                    const el = elements[selectedIndex];
+                    el.color = fgColorPicker.value; 
+                    if(el.type !== 'step') el.size = parseInt(sizePicker.value);
+                    el.fontFamily = fontSelector.value; el.bgColor = bgColorPicker.value;
+                    el.bgOpacity = bgOpacityPicker.value / 100;
+                    render(); updateLayerUI();
+                }
+            }
+            
+            sizePicker.addEventListener('input', (e) => { sizeVal.textContent = e.target.value; syncSelected(); });
+            fgColorPicker.oninput = syncSelected; fontSelector.onchange = syncSelected; bgColorPicker.oninput = syncSelected; bgOpacityPicker.oninput = syncSelected;
+
+            function updateZoomUI(val) {
+                zoom = val / 100;
+                container.style.transform = `scale(${zoom})`;
+                zoomLabel.textContent = val + '%';
+                zoomSlider.value = val;
+            }
+            zoomSlider.addEventListener('input', (e) => updateZoomUI(e.target.value));
+
+            viewport.addEventListener('wheel', (e) => {
+                if (e.ctrlKey || e.metaKey) {
+                    e.preventDefault();
+                    let currentVal = parseInt(zoomSlider.value);
+                    let delta = e.deltaY > 0 ? -10 : 10;
+                    let newVal = Math.max(10, Math.min(300, currentVal + delta));
+                    updateZoomUI(newVal);
+                }
+            }, { passive: false });
+
+            window.addEventListener('paste', (e) => {
+                if (isInputting || justPastedElement) return;
+                const items = (e.clipboardData || e.originalEvent.clipboardData).items;
+                for (let item of items) {
+                    if (item.type.indexOf('image') !== -1) {
+                        if (elements.length > 0 || bgImage) {
+                            if (!confirm("系統偵測到您貼上了一張新圖片。\n要取代目前的底圖（會清空現有標記）嗎？\n\n(※ 若您只是想複製畫布上的印章，請直接選取物件後按 Ctrl+C 與 Ctrl+V 即可)")) {
+                                return; 
+                            }
+                        }
+                        loadImage(URL.createObjectURL(item.getAsFile()));
+                        break;
+                    }
+                }
+            });
+
+            function loadImage(url) {
+                const img = new Image();
+                img.onload = () => { 
+                    bgImage = img; 
+                    canvas.width = img.width; canvas.height = img.height; 
+                    markupCanvas.width = img.width; markupCanvas.height = img.height; 
+                    elements = []; history = []; bgRotation = 0; 
+                    updateZoomUI(100); saveHistory(); render(); updateLayerUI(); 
+                };
+                img.src = url;
+            }
+
+            safeOn('loadLogoInput', 'onchange', (e) => {
+                const file = e.target.files[0];
+                if (file && file.type.startsWith('image/')) {
+                    const reader = new FileReader();
+                    reader.onload = (ev) => {
+                        const img = new Image();
+                        img.onload = () => {
+                            let w = img.width; let h = img.height; const maxW = canvas.width * 0.4;
+                            if (w > maxW) { h = h * (maxW / w); w = maxW; }
+                            elements.push({ type: 'image', img: img, x: canvas.width / 2 - w / 2, y: canvas.height / 2 - h / 2, w: w, h: h, rotate: 0, bgOpacity: 1, isOutlined: false });
+                            saveHistory(); 
+                            selectedIndex = elements.length - 1; setModeActive(document.getElementById('modeSelect')); mode = 'select';
+                            render(); updateLayerUI();
+                        };
+                        img.src = ev.target.result;
+                    };
+                    reader.readAsDataURL(file);
+                }
+                e.target.value = '';
+            });
+
+            safeOn('loadProjectInput', 'onchange', (e) => {
+                const file = e.target.files[0];
+                if (file) {
+                    if (file.type.startsWith('image/')) {
+                        const reader = new FileReader();
+                        reader.onload = (ev) => loadImage(ev.target.result);
+                        reader.readAsDataURL(file);
+                    } else {
+                        const reader = new FileReader();
+                        reader.onload = (ev) => {
+                            const data = JSON.parse(ev.target.result); 
+                            elements = data.elements.map(el => {
+                                if(el.type === 'image' && el.imgSrc) { const img = new Image(); img.src = el.imgSrc; el.img = img; }
+                                return el;
+                            });
+                            canvas.width = data.canvasWidth; canvas.height = data.canvasHeight; 
+                            markupCanvas.width = data.canvasWidth; markupCanvas.height = data.canvasHeight; 
+                            bgRotation = data.bgRotation || 0; render(); saveHistory(); updateLayerUI();
+                        };
+                        reader.readAsText(file);
+                    }
+                }
+                e.target.value = '';
+            });
+
+            window.moveLayer = function(idx, dir) {
+                if (idx + dir >= 0 && idx + dir < elements.length) {
+                    const temp = elements[idx];
+                    elements[idx] = elements[idx + dir];
+                    elements[idx + dir] = temp;
+                    if (selectedIndex === idx) selectedIndex = idx + dir;
+                    else if (selectedIndex === idx + dir) selectedIndex = idx;
+                    saveHistory(); render(); updateLayerUI();
+                }
+            };
+
+            function updateLayerUI() {
+                layerList.innerHTML = ''; layerCount.textContent = elements.length;
+                [...elements].reverse().forEach((el, revIdx) => {
+                    const idx = elements.length - 1 - revIdx;
+                    const item = document.createElement('div');
+                    item.className = `layer-item ${idx === selectedIndex ? 'active' : ''}`;
+                    
+                    item.draggable = true;
+                    item.ondragstart = (e) => { e.dataTransfer.setData('text/plain', idx); item.style.opacity = '0.5'; };
+                    item.ondragend = () => { item.style.opacity = '1'; };
+                    item.ondragover = (e) => { e.preventDefault(); item.classList.add('drag-over'); };
+                    item.ondragleave = () => { item.classList.remove('drag-over'); };
+                    item.ondrop = (e) => {
+                        e.preventDefault();
+                        item.classList.remove('drag-over');
+                        const draggedIdx = parseInt(e.dataTransfer.getData('text/plain'));
+                        if (!isNaN(draggedIdx) && draggedIdx !== idx) {
+                            const movedEl = elements.splice(draggedIdx, 1)[0];
+                            elements.splice(idx, 0, movedEl);
+                            selectedIndex = idx;
+                            saveHistory(); render(); updateLayerUI();
+                        }
+                    };
+
+                    let name = "未知"; let icon = "?";
+                    if(el.type === 'text') { name = el.text.slice(0, 10).replace('\n',' '); icon = "T"; }
+                    else if(el.type === 'step') { name = "步驟 " + el.text; icon = "1️⃣"; }
+                    else if(el.type === 'pencil') { name = "自由畫筆"; icon = "✎"; }
+                    else if(el.type === 'hide') { name = "遮蔽筆"; icon = "🖍️"; }
+                    else if(el.type === 'arrow') { name = "箭頭"; icon = "→"; }
+                    else if(el.type === 'rect') { name = "方框"; icon = "□"; }
+                    else if(el.type === 'circle') { name = "圓圈"; icon = "○"; }
+                    else if(el.type === 'eraser') { name = "還原橡皮擦"; icon = "🧽"; }
+                    else if(el.type === 'whiteout') { name = "自由畫筆(舊)"; icon = "✎"; }
+                    else if(el.type === 'uneraser') { name = "還原橡皮擦"; icon = "🧽"; }
+                    else if(el.type === 'image') { name = "浮水印/圖片"; icon = "IMG"; }
+                    
+                    const leftDiv = document.createElement('div');
+                    leftDiv.className = "flex items-center gap-3 overflow-hidden pointer-events-none";
+                    leftDiv.innerHTML = `<span class="w-8 h-7 bg-white border border-gray-200 flex items-center justify-center rounded font-black text-blue-600 text-[10px] shadow-sm shrink-0">${icon}</span><span class="text-[12px] text-gray-700 font-bold truncate">${name}</span>`;
+                    
+                    const rightDiv = document.createElement('div');
+                    rightDiv.className = "flex items-center gap-1.5 shrink-0";
+                    
+                    if(el.type !== 'image') {
+                        const colorDot = document.createElement('div');
+                        colorDot.className = "w-3 h-3 rounded-full mr-2 shadow-sm border border-gray-200";
+                        if(el.type === 'eraser' || el.type === 'uneraser') {
+                            colorDot.style.background = 'repeating-linear-gradient(45deg, #ccc, #ccc 2px, #fff 2px, #fff 4px)';
+                        } else {
+                            colorDot.style.background = el.color || '#fff';
+                        }
+                        rightDiv.appendChild(colorDot);
+                    }
+
+                    if (idx < elements.length - 1) {
+                        const upBtn = document.createElement('button');
+                        upBtn.innerHTML = '▲'; 
+                        upBtn.className = "icon-btn";
+                        upBtn.style.cssText = "width: 28px; height: 26px; min-width: unset; font-size: 10px; background: #f3f4f6; border: 1px solid #e5e7eb;";
+                        upBtn.title = "圖層上移";
+                        upBtn.onclick = (e) => { e.stopPropagation(); window.moveLayer(idx, 1); };
+                        rightDiv.appendChild(upBtn);
+                    }
+                    if (idx > 0) {
+                        const downBtn = document.createElement('button');
+                        downBtn.innerHTML = '▼'; 
+                        downBtn.className = "icon-btn";
+                        downBtn.style.cssText = "width: 28px; height: 26px; min-width: unset; font-size: 10px; background: #f3f4f6; border: 1px solid #e5e7eb;";
+                        downBtn.title = "圖層下移";
+                        downBtn.onclick = (e) => { e.stopPropagation(); window.moveLayer(idx, -1); };
+                        rightDiv.appendChild(downBtn);
+                    }
+                    
+                    item.appendChild(leftDiv);
+                    item.appendChild(rightDiv);
+
+                    item.onclick = () => { 
+                        selectedIndex = idx; 
+                        if(el.color && el.type !== 'uneraser' && el.type !== 'eraser') fgColorPicker.value = el.color; 
+                        if(el.size && el.type !== 'step') { sizePicker.value = el.size; sizeVal.textContent = el.size; }
+                        if(el.fontFamily) fontSelector.value = el.fontFamily; 
+                        
+                        isDashed = el.isDashed !== undefined ? el.isDashed : false;
+                        toggleButtonStyle('dashToggle', isDashed);
+                        
+                        setModeActive(document.getElementById('modeSelect'));
+                        mode = 'select';
+
+                        pingTimer = Date.now();
+                        const animatePing = () => {
+                            if (Date.now() - pingTimer < 800) {
+                                render(); requestAnimationFrame(animatePing);
+                            } else { render(); }
+                        };
+                        requestAnimationFrame(animatePing);
+
+                        render(); updateLayerUI(); 
+                    };
+                    layerList.appendChild(item);
+                });
+            }
+
+            safeOn('saveProject', 'onclick', () => {
+                const projName = prompt("計畫名稱：", "標註專案") || "存檔";
+                const serializableElements = elements.map(el => {
+                    if(el.type === 'image' && el.img) return { ...el, img: null, imgSrc: el.img.src };
+                    return el;
+                });
+                const data = { elements: serializableElements, canvasWidth: canvas.width, canvasHeight: canvas.height, bgRotation };
+                const blob = new Blob([JSON.stringify(data)], { type: 'application/json' });
+                const link = document.createElement('a'); link.href = URL.createObjectURL(blob); link.download = `${projName}.json`; link.click();
+            });
+
+            function saveHistory() { 
+                const state = {
+                    elements: elements.map(el => el.type === 'image' ? { ...el, img: null, imgSrc: el.img.src } : el),
+                    bgImageSrc: bgImage ? bgImage.src : null,
+                    bgRotation: bgRotation,
+                    width: canvas.width,
+                    height: canvas.height
+                };
+                history.push(JSON.stringify(state)); 
+                if (history.length > 30) history.shift(); 
+            }
+            
+            safeOn('undoBtn', 'onclick', () => { 
+                if (history.length > 1) { 
+                    history.pop(); 
+                    const pastState = JSON.parse(history[history.length - 1]); 
+                    
+                    if (Array.isArray(pastState)) {
+                        elements = pastState.map(el => {
+                            if(el.type === 'image' && el.imgSrc) { const img = new Image(); img.src = el.imgSrc; el.img = img; }
+                            return el;
+                        });
+                    } else {
+                        elements = pastState.elements.map(el => {
+                            if(el.type === 'image' && el.imgSrc) { const img = new Image(); img.src = el.imgSrc; el.img = img; }
+                            return el;
+                        });
+                        bgRotation = pastState.bgRotation || 0;
+                        canvas.width = pastState.width || 1000;
+                        canvas.height = pastState.height || 600;
+                        markupCanvas.width = canvas.width;
+                        markupCanvas.height = canvas.height;
+                        
+                        if (pastState.bgImageSrc) {
+                            const img = new Image();
+                            img.onload = () => { bgImage = img; selectedIndex = -1; render(); updateLayerUI(); };
+                            img.src = pastState.bgImageSrc;
+                        } else {
+                            bgImage = null; selectedIndex = -1; render(); updateLayerUI();
+                        }
+                        return; 
+                    }
+                    selectedIndex = -1; render(); updateLayerUI(); 
+                } 
+            });
+
+            function render() {
+                ctx.clearRect(0, 0, canvas.width, canvas.height);
+                ctx.save();
+                if (bgImage) { ctx.save(); ctx.translate(canvas.width/2, canvas.height/2); ctx.rotate(bgRotation * Math.PI / 180); ctx.drawImage(bgImage, -bgImage.width/2, -bgImage.height/2); ctx.restore(); }
+                else { 
+                    ctx.fillStyle = "#ffffff"; 
+                    ctx.fillRect(0, 0, canvas.width, canvas.height); 
+                    if (elements.length === 0 && !isDrawing && !isInputting) {
+                        ctx.font = "bold 20px 'Noto Serif TC'"; ctx.fillStyle = "#9ca3af"; ctx.textAlign = "center"; ctx.fillText("Ctrl+V 貼上截圖 或 直接開始作畫", canvas.width / 2, canvas.height / 2); 
+                    }
+                }
+                
+                markupCtx.clearRect(0, 0, markupCanvas.width, markupCanvas.height);
+                
+                elements.forEach((el, index) => {
+                    if (el.hidden) return; 
+                    
+                    markupCtx.save(); 
+                    const lw = Math.max(1, el.size / 5);
+                    if (el.rotate) { let cx = (el.x + el.w/2) || el.x || (el.x1 + el.x2)/2; let cy = (el.y + el.h/2) || el.y || (el.y1 + el.y2)/2; markupCtx.translate(cx, cy); markupCtx.rotate(el.rotate); markupCtx.translate(-cx, -cy); }
+                    
+                    if (el.type === 'eraser' || el.type === 'uneraser') {
+                        markupCtx.globalCompositeOperation = 'destination-out';
+                        markupCtx.lineWidth = lw; markupCtx.lineCap = "round"; markupCtx.lineJoin = "round";
+                        markupCtx.beginPath(); markupCtx.moveTo(el.points[0].x, el.points[0].y); el.points.forEach(p => markupCtx.lineTo(p.x, p.y)); markupCtx.stroke(); 
+                        markupCtx.restore();
+                        return;
+                    }
+
+                    markupCtx.globalCompositeOperation = 'source-over';
+
+                    if (el.type !== 'image' && el.type !== 'step') {
+                        markupCtx.strokeStyle = el.color || '#ffffff'; 
+                        markupCtx.fillStyle = el.color || '#ffffff'; 
+                        markupCtx.lineWidth = lw; markupCtx.lineCap = "round"; markupCtx.lineJoin = "round";
+                        if (el.isDashed) markupCtx.setLineDash([lw * 2, lw * 2]); else markupCtx.setLineDash([]);
+                    }
+
+                    if (el.type === 'image' && el.img) {
+                        if (el.bgOpacity !== undefined) markupCtx.globalAlpha = el.bgOpacity;
+                        markupCtx.drawImage(el.img, el.x, el.y, el.w, el.h);
+                        markupCtx.globalAlpha = 1.0;
+                        if (el.isOutlined) { markupCtx.strokeStyle = el.color || '#3b82f6'; markupCtx.lineWidth = 2; markupCtx.setLineDash(el.isDashed ? [6, 6] : []); markupCtx.strokeRect(el.x, el.y, el.w, el.h); }
+                    }
+                    else if (el.type === 'step') {
+                        markupCtx.fillStyle = el.color || '#ef4444';
+                        markupCtx.beginPath();
+                        markupCtx.arc(el.x + el.w/2, el.y + el.h/2, el.w/2, 0, Math.PI*2);
+                        markupCtx.fill();
+                        if (el.isOutlined) {
+                            markupCtx.strokeStyle = '#ffffff'; 
+                            markupCtx.lineWidth = Math.max(2, el.w/15);
+                            markupCtx.stroke();
+                        }
+                        markupCtx.fillStyle = '#ffffff';
+                        
+                        let defaultFontSize = el.w * 0.55;
+                        markupCtx.font = `bold ${defaultFontSize}px ${el.fontFamily || "'Noto Sans TC', sans-serif"}`;
+                        let textWidth = markupCtx.measureText(el.text).width;
+                        let maxWidth = el.w * 0.75; 
+                        let finalFontSize = defaultFontSize;
+                        
+                        if (textWidth > maxWidth) {
+                            finalFontSize = defaultFontSize * (maxWidth / textWidth);
+                            markupCtx.font = `bold ${finalFontSize}px ${el.fontFamily || "'Noto Sans TC', sans-serif"}`;
+                        }
+                        
+                        markupCtx.textAlign = "center";
+                        markupCtx.textBaseline = "middle";
+                        markupCtx.fillText(el.text, el.x + el.w/2, el.y + el.h/2 + (finalFontSize * 0.05));
+                    }
+                    else if (el.type === 'pencil' || el.type === 'whiteout' || el.type === 'hide') { 
+                        markupCtx.lineWidth = lw; 
+                        if (el.isDashed) markupCtx.setLineDash([lw * 1.5, lw * 1.5]); else markupCtx.setLineDash([]);
+                        markupCtx.beginPath(); markupCtx.moveTo(el.points[0].x, el.points[0].y); el.points.forEach(p => markupCtx.lineTo(p.x, p.y)); markupCtx.stroke(); 
+                    }
+                    else if (el.type === 'arrow') { drawArrow(markupCtx, el.x1, el.y1, el.x2, el.y2, el.color || '#ff0000', lw, el.isDashed); }
+                    else if (el.type === 'rect') { if (el.bgOpacity > 0) { markupCtx.fillStyle = hexToRgba(el.bgColor || "#ffffff", el.bgOpacity); markupCtx.fillRect(el.x, el.y, el.w, el.h); } if (el.isOutlined !== false) markupCtx.strokeRect(el.x, el.y, el.w, el.h); }
+                    else if (el.type === 'circle') { if (el.bgOpacity > 0) { markupCtx.fillStyle = hexToRgba(el.bgColor || "#ffffff", el.bgOpacity); markupCtx.beginPath(); markupCtx.arc(el.x + el.w/2, el.y + el.h/2, Math.abs(el.w)/2, 0, Math.PI*2); markupCtx.fill(); } if (el.isOutlined !== false) { markupCtx.beginPath(); markupCtx.arc(el.x + el.w/2, el.y + el.h/2, Math.abs(el.w)/2, 0, Math.PI*2); markupCtx.stroke(); } }
+                    else if (el.type === 'text') { 
+                        markupCtx.font = `bold ${el.size}px ${el.fontFamily || "'Noto Serif TC', serif"}`; markupCtx.textBaseline = "top"; const lines = el.text.split('\n'); const mw = Math.max(...lines.map(l => markupCtx.measureText(l).width)); const th = lines.length * el.size * 1.2; 
+                        if (el.bgOpacity > 0) { markupCtx.fillStyle = hexToRgba(el.bgColor || "#ffffff", el.bgOpacity); markupCtx.fillRect(el.x-4, el.y-2, mw+8, th+4); } 
+                        markupCtx.fillStyle = el.color || '#ff0000'; lines.forEach((l, i) => markupCtx.fillText(l, el.x, el.y + i * el.size * 1.2)); el.w = mw; el.h = th; 
+                    }
+                    markupCtx.restore();
+                }); 
+                
+                ctx.drawImage(markupCanvas, 0, 0);
+
+                if (mode === 'crop' && isDrawing && cropRect) {
+                    ctx.save();
+                    let cx = Math.min(dragStartX, dragStartX + cropRect.w);
+                    let cy = Math.min(dragStartY, dragStartY + cropRect.h);
+                    let cw = Math.abs(cropRect.w);
+                    let ch = Math.abs(cropRect.h);
+                    
+                    ctx.fillStyle = "rgba(0, 0, 0, 0.5)";
+                    ctx.fillRect(0, 0, canvas.width, cy); 
+                    ctx.fillRect(0, cy + ch, canvas.width, canvas.height - cy - ch); 
+                    ctx.fillRect(0, cy, cx, ch); 
+                    ctx.fillRect(cx + cw, cy, canvas.width - cx - cw, ch); 
+                    
+                    ctx.strokeStyle = "#ffffff";
+                    ctx.setLineDash([5, 5]);
+                    ctx.lineWidth = 2;
+                    ctx.strokeRect(cx, cy, cw, ch);
+                    ctx.restore();
+                }
+
+                elements.forEach((el, index) => {
+                    if (index === selectedIndex && !el.hidden) {
+                        ctx.save();
+                        const pad = Math.max(2, el.size / 5);
+                        if (el.rotate) { let cx = (el.x + el.w/2) || el.x || (el.x1 + el.x2)/2; let cy = (el.y + el.h/2) || el.y || (el.y1 + el.y2)/2; ctx.translate(cx, cy); ctx.rotate(el.rotate); ctx.translate(-cx, -cy); }
+                        ctx.setLineDash([6, 6]); ctx.strokeStyle = "#2563eb"; ctx.lineWidth = 3;
+                        if (el.type === 'arrow') { ctx.setLineDash([]); ctx.fillStyle = "#2563eb"; ctx.beginPath(); ctx.arc(el.x1, el.y1, 8, 0, Math.PI*2); ctx.fill(); ctx.beginPath(); ctx.arc(el.x2, el.y2, 8, 0, Math.PI*2); ctx.fill(); }
+                        else if (el.type === 'whiteout' || el.type === 'uneraser' || el.type === 'pencil' || el.type === 'eraser' || el.type === 'hide') { const xs = el.points.map(p=>p.x), ys = el.points.map(p=>p.y); ctx.strokeRect(Math.min(...xs)-pad, Math.min(...ys)-pad, Math.max(...xs)-Math.min(...xs)+pad*2, Math.max(...ys)-Math.min(...ys)+pad*2); }
+                        else { ctx.strokeRect(el.x-6, el.y-6, el.w+12, el.h+12); ctx.setLineDash([]); ctx.fillStyle = "#2563eb"; ctx.beginPath(); ctx.arc(el.x+el.w, el.y+el.h, 8, 0, Math.PI*2); ctx.fill(); ctx.beginPath(); ctx.arc(el.x+el.w/2, el.y-30, 8, 0, Math.PI*2); ctx.fill(); }
+                        
+                        if (pingTimer > 0 && (Date.now() - pingTimer < 800)) {
+                            const progress = (Date.now() - pingTimer) / 800;
+                            let cx = 0, cy = 0;
+                            if (el.type === 'arrow') { cx = (el.x1 + el.x2)/2; cy = (el.y1 + el.y2)/2; }
+                            else if (el.type === 'whiteout' || el.type === 'uneraser' || el.type === 'pencil' || el.type === 'eraser' || el.type === 'hide') {
+                                if(el.points && el.points.length > 0) {
+                                    const xs = el.points.map(p=>p.x), ys = el.points.map(p=>p.y);
+                                    cx = (Math.min(...xs) + Math.max(...xs))/2; cy = (Math.min(...ys) + Math.max(...ys))/2;
+                                }
+                            } else { cx = el.x + el.w/2; cy = el.y + el.h/2; }
+                            
+                            ctx.setLineDash([]);
+                            ctx.beginPath();
+                            ctx.arc(cx, cy, 30 + (progress * 60), 0, Math.PI * 2);
+                            ctx.strokeStyle = `rgba(239, 68, 68, ${1 - progress})`;
+                            ctx.lineWidth = 6;
+                            ctx.stroke();
+                        }
+                        
+                        ctx.restore();
+                    }
+                });
+
+                ctx.restore();
+            }
+
+            function drawArrow(ctx, x1, y1, x2, y2, color, width, isDashedVal) {
+                const headlen = width * 5; const angle = Math.atan2(y2 - y1, x2 - x1); ctx.save();
+                ctx.strokeStyle = color; ctx.fillStyle = color; ctx.lineWidth = width;
+                if (isDashedVal) ctx.setLineDash([width * 2, width * 2]); else ctx.setLineDash([]);
+                ctx.beginPath(); ctx.moveTo(x1, y1); ctx.lineTo(x2, y2); ctx.stroke();
+                ctx.setLineDash([]); 
+                ctx.beginPath(); ctx.moveTo(x2, y2);
+                ctx.lineTo(x2-headlen*Math.cos(angle-Math.PI/7), y2-headlen*Math.sin(angle-Math.PI/7));
+                ctx.lineTo(x2-headlen*Math.cos(angle+Math.PI/7), y2-headlen*Math.sin(angle+Math.PI/7));
+                ctx.closePath(); ctx.fill(); ctx.restore();
+            }
+
+            function findElementAt(x, y) {
+                for (let i = elements.length - 1; i >= 0; i--) {
+                    const el = elements[i];
+                    if (el.type === 'arrow') { if (Math.hypot(x-el.x1, y-el.y1)<20) return { index: i, point: 'start' }; if (Math.hypot(x-el.x2, y-el.y2)<20) return { index: i, point: 'end' }; if (distToSegment({x, y}, {x: el.x1, y: el.y1}, {x: el.x2, y: el.y2})<20) return { index: i }; }
+                    else if (el.type === 'whiteout' || el.type === 'uneraser' || el.type === 'pencil' || el.type === 'eraser' || el.type === 'hide') { const hitRadius = Math.max(5, el.size / 5); for (let p of el.points) if (Math.hypot(p.x-x, p.y-y)<hitRadius) return { index: i }; }
+                    else { 
+                        if (el.type === 'step' && Math.hypot(x-(el.x+el.w/2), y-(el.y+el.h/2)) < (el.w/2 * 0.8)) return { index: i };
+                        if (Math.hypot(x-(el.x+el.w), y-(el.y+el.h))<20) return { index: i, point: 'resize' }; 
+                        if (Math.hypot(x-(el.x+el.w/2), y-(el.y-30))<20) return { index: i, point: 'rotate' }; 
+                        if (x>=el.x && x<=el.x+el.w && y>=el.y && y<=el.y+el.h) return { index: i }; 
+                    }
+                }
+                return null;
+            }
+
+            function distToSegment(p, v, w) { const l2 = Math.pow(v.x-w.x, 2) + Math.pow(v.y-w.y, 2); if (l2 === 0) return Math.hypot(p.x-v.x, p.y-v.y); let t = Math.max(0, Math.min(1, ((p.x-v.x)*(w.x-v.x)+(p.y-v.y)*(w.y-v.y))/l2)); return Math.hypot(p.x-(v.x+t*(w.x-v.x)), p.y-(v.y+t*(w.y-v.y))); }
+
+            canvas.addEventListener('mousedown', (e) => {
+                if (isInputting) return; 
+                const { x, y } = getMousePos(e); dragStartX = x; dragStartY = y;
+                
+                if (mode === 'eyedropper') {
+                    if (!bgImage) return;
+                    try {
+                        const px = ctx.getImageData(Math.floor(x), Math.floor(y), 1, 1).data;
+                        if (px[3] > 0) { 
+                            const hex = "#" + (1 << 24 | px[0] << 16 | px[1] << 8 | px[2]).toString(16).slice(1);
+                            fgColorPicker.value = hex;
+                            syncSelected();
+                            document.getElementById('modeHide').click();
+                        }
+                    } catch (err) { console.warn("無法讀取顏色", err); }
+                    return;
+                }
+                
+                if (mode === 'crop') {
+                    if (!bgImage) return;
+                    isDrawing = true;
+                    cropRect = { x: x, y: y, w: 0, h: 0 };
+                    return;
+                }
+
+                if (mode === 'step') {
+                    let stepInput = document.getElementById('stepStartNum');
+                    let textVal = stepInput.value || "1";
+                    let s = Math.max(parseInt(sizePicker.value), 15);
+                    let newStep = { type: 'step', x: x - s, y: y - s, w: s*2, h: s*2, size: s, color: fgColorPicker.value, text: textVal, rotate: 0, isOutlined: isOutlined };
+                    elements.push(newStep);
+                    
+                    if (!isNaN(textVal) && textVal.trim() !== "") {
+                        stepInput.value = parseInt(textVal) + 1;
+                    }
+                    
+                    saveHistory(); render(); updateLayerUI();
+                    
+                    if (stepModeType === 'single') {
+                        document.getElementById('modeSelect').click();
+                    }
+                    return; 
+                }
+
+                if (mode === 'select') {
+                    const hit = findElementAt(x, y);
+                    if (hit) { 
+                        if ((e.ctrlKey || e.altKey || e.metaKey)) {
+                            let clonedEl = JSON.parse(JSON.stringify(elements[hit.index]));
+                            if (elements[hit.index].type === 'image' && elements[hit.index].img) {
+                                clonedEl.imgSrc = elements[hit.index].img.src;
+                                clonedEl.img = elements[hit.index].img;
+                            }
+                            if (clonedEl.type === 'step') {
+                                let stepInput = document.getElementById('stepStartNum');
+                                let currentNext = parseInt(stepInput.value);
+                                if (!isNaN(currentNext)) {
+                                    clonedEl.text = currentNext.toString();
+                                    stepInput.value = currentNext + 1; 
+                                }
+                            }
+                            elements.push(clonedEl);
+                            selectedIndex = elements.length - 1;
+                        } else {
+                            selectedIndex = hit.index; 
+                        }
+                        
+                        selectedPoint = hit.point || null; isDragging = true; 
+                        const el = elements[selectedIndex]; dragOffsetX = x-(el.x||el.x1||0); dragOffsetY = y-(el.y||el.y1||0); 
+                        if(el.color && el.type !== 'uneraser' && el.type !== 'eraser') fgColorPicker.value = el.color; 
+                        if(el.size && el.type !== 'step') { sizePicker.value = el.size; sizeVal.textContent = el.size; }
+                        
+                        if(el.isDashed !== undefined) {
+                            isDashed = el.isDashed;
+                            toggleButtonStyle('dashToggle', isDashed);
+                        }
+                    }
+                    else selectedIndex = -1;
+                } else if (['arrow', 'rect', 'circle', 'eraser', 'pencil', 'hide'].includes(mode)) {
+                    isDrawing = true; const common = { size: parseInt(sizePicker.value), rotate: 0, isDashed };
+                    if (mode === 'eraser') currentElement = { type: 'eraser', points: [{x, y}], ...common };
+                    else if (mode === 'pencil') currentElement = { type: 'pencil', points: [{x, y}], color: fgColorPicker.value, ...common };
+                    else if (mode === 'hide') currentElement = { type: 'hide', points: [{x, y}], color: fgColorPicker.value, ...common };
+                    else if (mode === 'arrow') currentElement = { type: 'arrow', x1: x, y1: y, x2: x, y2: y, color: fgColorPicker.value, ...common };
+                    else currentElement = { type: mode, x, y, w: 0, h: 0, color: fgColorPicker.value, isOutlined, bgColor: bgColorPicker.value, bgOpacity: bgOpacityPicker.value/100, ...common };
+                    elements.push(currentElement);
+                } else if (mode === 'text') {
+                    createTextInput(x, y);
+                }
+                render(); updateLayerUI();
+            });
+
+            canvas.addEventListener('mousemove', (e) => {
+                const { x, y } = getMousePos(e);
+                
+                if (mode === 'crop' && isDrawing) {
+                    cropRect.w = x - dragStartX;
+                    cropRect.h = y - dragStartY;
+                    render();
+                    return;
+                }
+                
+                if (mode === 'eyedropper') {
+                    magDiv.classList.remove('hidden');
+                    magDiv.style.left = (e.clientX + 20) + 'px';
+                    magDiv.style.top = (e.clientY - 60) + 'px';
+
+                    magCtx.imageSmoothingEnabled = false;
+                    magCtx.clearRect(0, 0, 120, 120);
+                    magCtx.drawImage(canvas, Math.floor(x) - 15, Math.floor(y) - 15, 30, 30, 0, 0, 120, 120);
+
+                    try {
+                        const px = ctx.getImageData(Math.floor(x), Math.floor(y), 1, 1).data;
+                        if (px[3] > 0) {
+                            const hex = "#" + (1 << 24 | px[0] << 16 | px[1] << 8 | px[2]).toString(16).slice(1).toUpperCase();
+                            document.getElementById('magColorText').textContent = hex;
+                        }
+                    } catch(err) {}
+                }
+
+                if (isDrawing && currentElement) { 
+                    if (currentElement.type === 'whiteout' || currentElement.type === 'uneraser' || currentElement.type === 'pencil' || currentElement.type === 'eraser' || currentElement.type === 'hide') { currentElement.points.push({x, y}); } 
+                    else if (currentElement.type === 'arrow') { currentElement.x2 = x; currentElement.y2 = y; } 
+                    else { 
+                        let dx = x - currentElement.x, dy = y - currentElement.y; 
+                        if (isShiftPressed) { let s = Math.max(Math.abs(dx), Math.abs(dy)); dx = dx<0?-s:s; dy = dy<0?-s:s; } 
+                        currentElement.w = dx; currentElement.h = dy; 
+                    } render(); 
+                }
+                else if (isDragging && selectedIndex !== -1) {
+                    const el = elements[selectedIndex];
+                    if (selectedPoint === 'start') { el.x1 = x; el.y1 = y; } 
+                    else if (selectedPoint === 'end') { el.x2 = x; el.y2 = y; } 
+                    else if (selectedPoint === 'resize') { 
+                        el.w = x-el.x; el.h = y-el.y; 
+                        if (el.type === 'step') { let d = Math.max(Math.abs(el.w), Math.abs(el.h)); el.w = d; el.h = d; }
+                        if (el.type === 'text') el.size = Math.max(10, Math.abs(el.h/1.2)); 
+                    } 
+                    else if (selectedPoint === 'rotate') { let cx = el.x + el.w/2, cy = el.y + el.h/2; el.rotate = Math.atan2(y-cy, x-cx) + Math.PI/2; }
+                    else { 
+                        const dx = x-dragOffsetX, dy = y-dragOffsetY; 
+                        if (el.type === 'arrow') { const ox = dx-el.x1, oy = dy-el.y1; el.x1 += ox; el.y1 += oy; el.x2 += ox; el.y2 += oy; dragOffsetX = x-el.x1; dragOffsetY = y-el.y1; } 
+                        else if (el.type === 'whiteout' || el.type === 'uneraser' || el.type === 'pencil' || el.type === 'eraser' || el.type === 'hide') { const ox = x-dragStartX, oy = y-dragStartY; el.points.forEach(p=>{p.x+=ox; p.y+=oy;}); dragStartX=x; dragStartY=y; } 
+                        else { el.x = dx; el.y = dy; } 
+                    }
+                    render();
+                }
+            });
+
+            canvas.addEventListener('mouseout', () => { magDiv.classList.add('hidden'); });
+
+            window.addEventListener('mouseup', (e) => {
+                const { x, y } = getMousePos(e); 
+                
+                if (mode === 'crop' && isDrawing) {
+                    let cx = Math.min(dragStartX, x);
+                    let cy = Math.min(dragStartY, y);
+                    let cw = Math.abs(x - dragStartX);
+                    let ch = Math.abs(y - dragStartY);
+                    
+                    if (cw > 20 && ch > 20) {
+                        saveHistory(); 
+                        
+                        const tempCanvas = document.createElement('canvas');
+                        tempCanvas.width = cw; tempCanvas.height = ch;
+                        const tempCtx = tempCanvas.getContext('2d');
+                        tempCtx.fillStyle = "#ffffff"; tempCtx.fillRect(0, 0, cw, ch);
+                        
+                        if (bgImage) {
+                            tempCtx.save();
+                            tempCtx.translate(canvas.width/2 - cx, canvas.height/2 - cy);
+                            tempCtx.rotate(bgRotation * Math.PI / 180);
+                            tempCtx.drawImage(bgImage, -bgImage.width/2, -bgImage.height/2);
+                            tempCtx.restore();
+                        }
+                        
+                        elements.forEach(el => {
+                            if (el.x !== undefined) el.x -= cx;
+                            if (el.x1 !== undefined) { el.x1 -= cx; el.x2 -= cx; el.y1 -= cy; el.y2 -= cy; }
+                            if (el.y !== undefined) el.y -= cy;
+                            if (el.points) el.points.forEach(p => { p.x -= cx; p.y -= cy; });
+                        });
+                        
+                        const newImg = new Image();
+                        newImg.onload = () => {
+                            bgImage = newImg;
+                            bgRotation = 0;
+                            canvas.width = cw; canvas.height = ch;
+                            markupCanvas.width = cw; markupCanvas.height = ch;
+                            cropRect = null;
+                            document.getElementById('modeSelect').click();
+                        };
+                        newImg.src = tempCanvas.toDataURL('image/png');
+                    } else {
+                        cropRect = null;
+                        document.getElementById('modeSelect').click();
+                    }
+                    isDrawing = false;
+                    return;
+                }
+
+                if (isDrawing && currentElement) { if ((currentElement.type !== 'whiteout' && currentElement.type !== 'uneraser' && currentElement.type !== 'pencil' && currentElement.type !== 'eraser' && currentElement.type !== 'hide') && Math.hypot(x-dragStartX, y-dragStartY)<10) elements.pop(); else saveHistory(); } else if (isDragging) saveHistory();
+                isDrawing = false; isDragging = false; selectedPoint = null; render(); updateLayerUI();
+            });
+
+            canvas.addEventListener('dblclick', (e) => { 
+                if (mode !== 'select') return; 
+                const hit = findElementAt(...Object.values(getMousePos(e))); 
+                if (hit && (elements[hit.index].type === 'text' || elements[hit.index].type === 'step')) {
+                    createTextInput(elements[hit.index].x, elements[hit.index].y, elements[hit.index], hit.index);
+                } 
+            });
+
+            function createTextInput(x, y, existingEl = null, index = -1) {
+                isInputting = true; 
+                const fSize = existingEl ? (existingEl.type === 'step' ? existingEl.w * 0.55 : existingEl.size) : parseInt(sizePicker.value);
+                if (index !== -1) { elements[index].hidden = true; render(); }
+
+                const editor = document.createElement('textarea'); 
+                editor.className = 'text-editor-active'; 
+                editor.style.left = (existingEl && existingEl.type === 'step' ? x + existingEl.w/4 : x) + 'px'; 
+                editor.style.top = (existingEl && existingEl.type === 'step' ? y + existingEl.h/4 : y) + 'px';
+                editor.style.fontSize = fSize + 'px'; 
+                editor.style.fontFamily = existingEl ? existingEl.fontFamily : fontSelector.value; 
+                editor.style.color = existingEl ? (existingEl.type === 'step' ? '#000000' : existingEl.color) : fgColorPicker.value; 
+                editor.value = existingEl ? existingEl.text : ""; 
+                editor.placeholder = "輸入...";
+                
+                const updateSize = () => {
+                    editor.style.width = 'auto'; editor.style.height = 'auto'; 
+                    editor.style.width = (editor.scrollWidth + 5) + 'px'; 
+                    editor.style.height = (editor.scrollHeight + 5) + 'px';
+                };
+                
+                container.appendChild(editor); 
+                updateSize();
+                editor.oninput = updateSize;
+                
+                setTimeout(() => { editor.focus(); editor.setSelectionRange(editor.value.length, editor.value.length); }, 10);
+                
+                editor.addEventListener('keydown', (e) => {
+                    if ((e.ctrlKey || e.altKey || e.metaKey) && e.key === 'Enter') {
+                        e.preventDefault();
+                        editor.blur();
+                    }
+                });
+                
+                editor.onblur = () => {
+                    const textVal = editor.value.trim();
+                    if (index !== -1) elements[index].hidden = false;
+
+                    if (textVal !== "") { 
+                        if (existingEl && existingEl.type === 'step') {
+                            existingEl.text = textVal;
+                            elements[index] = existingEl;
+                        } else {
+                            const data = { 
+                                type: 'text', text: textVal, x, y, 
+                                color: editor.style.color, size: fSize, 
+                                fontFamily: editor.style.fontFamily, 
+                                rotate: existingEl ? existingEl.rotate : 0, 
+                                bgOpacity: existingEl ? existingEl.bgOpacity : 0 
+                            }; 
+                            if (index !== -1) elements[index] = data; else elements.push(data); 
+                        }
+                        saveHistory(); 
+                        selectedIndex = index !== -1 ? index : elements.length - 1;
+                        setModeActive(document.getElementById('modeSelect'));
+                        mode = 'select';
+                    } else if (index !== -1) {
+                        elements.splice(index, 1); selectedIndex = -1; saveHistory();
+                    }
+                    if (editor.parentNode) container.removeChild(editor); 
+                    isInputting = false; render(); updateLayerUI();
+                };
+            }
+
+            function getMousePos(e) { const rect = canvas.getBoundingClientRect(); return { x: (e.clientX-rect.left)*(canvas.width/rect.width), y: (e.clientY-rect.top)*(canvas.height/rect.height) }; }
+            safeOn('downloadBtn', 'onclick', () => { selectedIndex = -1; render(); const link = document.createElement('a'); link.download = `圖片標註_${new Date().getTime()}.png`; link.href = canvas.toDataURL('image/png'); link.click(); });
+            
+            window.addEventListener('keydown', (e) => { 
+                if (e.key === 'Shift') isShiftPressed = true; 
+                if ((e.key === 'Delete' || e.key === 'Backspace') && selectedIndex !== -1 && !isInputting) { 
+                    deleteSelectedElement();
+                } 
+                if (e.ctrlKey && (e.key === 'c' || e.key === 'C')) {
+                    if (selectedIndex !== -1 && !isInputting) {
+                        copiedElement = JSON.parse(JSON.stringify(elements[selectedIndex]));
+                        if (elements[selectedIndex].type === 'image' && elements[selectedIndex].img) {
+                            copiedElement.imgSrc = elements[selectedIndex].img.src;
+                        }
+                    }
+                }
+                if (e.ctrlKey && (e.key === 'v' || e.key === 'V')) {
+                    if (!isInputting && copiedElement) {
+                        justPastedElement = true;
+                        setTimeout(() => justPastedElement = false, 100);
+                        
+                        let newEl = JSON.parse(JSON.stringify(copiedElement));
+                        if (newEl.type === 'image' && newEl.imgSrc) {
+                            const img = new Image();
+                            img.src = newEl.imgSrc;
+                            newEl.img = img;
+                        }
+                        
+                        const offset = 20;
+                        if (newEl.x !== undefined) newEl.x += offset;
+                        if (newEl.y !== undefined) newEl.y += offset;
+                        if (newEl.x1 !== undefined) { newEl.x1 += offset; newEl.x2 += offset; newEl.y1 += offset; newEl.y2 += offset; }
+                        if (newEl.points) { newEl.points.forEach(p => { p.x += offset; p.y += offset; }); }
+
+                        if (newEl.type === 'step') {
+                            let stepInput = document.getElementById('stepStartNum');
+                            let currentNext = parseInt(stepInput.value);
+                            if (!isNaN(currentNext)) {
+                                newEl.text = currentNext.toString();
+                                stepInput.value = currentNext + 1; 
+                            }
+                        }
+
+                        elements.push(newEl);
+                        selectedIndex = elements.length - 1;
+                        
+                        setModeActive(document.getElementById('modeSelect'));
+                        mode = 'select';
+                        
+                        saveHistory();
+                        render();
+                        updateLayerUI();
+                    }
+                }
+                if (e.ctrlKey && (e.key === 'z' || e.key === 'Z')) { e.preventDefault(); document.getElementById('undoBtn').click(); } 
+            });
+            window.addEventListener('keyup', (e) => { if (e.key === 'Shift') isShiftPressed = false; });
+            
+            window.addEventListener('paste', (e) => {
+                if (isInputting || justPastedElement) return;
+                const items = (e.clipboardData || e.originalEvent.clipboardData).items;
+                for (let item of items) {
+                    if (item.type.indexOf('image') !== -1) {
+                        if (elements.length > 0 || bgImage) {
+                            if (!confirm("系統偵測到您貼上了一張新圖片。\n要取代目前的底圖（會清空現有標記）嗎？\n\n(※ 若您只是想複製畫布上的印章，請直接選取物件後按 Ctrl+C 與 Ctrl+V 即可)")) {
+                                return; 
+                            }
+                        }
+                        loadImage(URL.createObjectURL(item.getAsFile()));
+                        break;
+                    }
+                }
+            });
+            
+            const hexToRgba = (hex, alpha) => { const r = parseInt(hex.slice(1,3),16), g = parseInt(hex.slice(3,5),16), b = parseInt(hex.slice(5,7),16); return `rgba(${r},${g},${b},${alpha})`; };
+            
+            // ================= PWA 安裝與 Service Worker 註冊 =================
+            let deferredPrompt;
+            const installAppBtn = document.getElementById('installAppBtn');
+            const installDivider = document.getElementById('installDivider');
+
+            window.addEventListener('beforeinstallprompt', (e) => {
+                // 阻止 Chrome 預設的安裝提示，改用我們自己美麗的按鈕
+                e.preventDefault();
+                deferredPrompt = e;
+                if(installAppBtn) installAppBtn.style.display = 'flex';
+                if(installDivider) installDivider.style.display = 'block';
+            });
+
+            if (installAppBtn) {
+                installAppBtn.addEventListener('click', async () => {
+                    if (deferredPrompt) {
+                        deferredPrompt.prompt();
+                        const { outcome } = await deferredPrompt.userChoice;
+                        if (outcome === 'accepted') {
+                            installAppBtn.style.display = 'none';
+                            if(installDivider) installDivider.style.display = 'none';
+                        }
+                        deferredPrompt = null;
+                    }
+                });
+            }
+
+            if ('serviceWorker' in navigator) {
+                window.addEventListener('load', () => {
+                    // 註冊物流管家
+                    navigator.serviceWorker.register('./sw.js').then(reg => {
+                        console.log('物流管家(ServiceWorker)就位，準備好離線作業！');
+                    }).catch(err => {
+                        console.log('物流管家罷工了: ', err);
+                    });
+                });
+            }
+        });
+    </script>
+</body>
+</html>
