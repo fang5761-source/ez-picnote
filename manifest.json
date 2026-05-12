@@ -1,7 +1,7 @@
 {
   "name": "圖片標註快手 (EZ-PicNote)",
   "short_name": "標註快手",
-  "start_url": "./圖片標註快手.html",
+  "start_url": "./index.html",
   "display": "standalone",
   "background_color": "#f0f2f5",
   "theme_color": "#2563eb",
